@@ -1,0 +1,250 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless image processing service that automatically converts uploaded images to optimized WebP format with multiple sizes, served through CloudFront CDN
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: image-optimizer-for-blogs
+    Description: Serverless image processing service that automatically converts uploaded images to optimized WebP format with multiple sizes, served through CloudFront CDN.
+    Author: Allen Helton
+    Labels:
+      - image-processing
+      - webp
+      - cloudfront
+      - rust
+      - lambda
+      - s3
+      - cdn
+      - optimization
+      - performance
+    HomePageUrl: https://github.com/allenheltondev/image-downscaler
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://github.com/allenheltondev/image-downscaler
+    SpdxLicenseId: MIT
+    ReadmeUrl: readme.md
+    LicenseUrl: LICENSE.txt
+
+Parameters:
+  RootDomainName:
+    Type: String
+    Description: Optional root custom domain name for CDN (e.g., example.com). Leave empty to use CloudFront domain.
+    Default: ''
+  HostedZoneId:
+    Type: String
+    Description: Route53 Hosted Zone Id for the root custom domain name. Required only if RootDomainName is provided.
+    Default: ''
+  CustomSubdomain:
+    Type: String
+    Description: Subdomain to access images from when using custom domain (e.g., assets, cdn, images). Creates subdomain.yourdomain.com
+    Default: assets
+  S3BucketName:
+    Type: String
+    Description: Name of existing S3 Bucket to use for image storage. Leave empty to create a new bucket automatically.
+    Default: ''
+
+Conditions:
+  CreateNewBucket: !Equals [!Ref S3BucketName, '']
+  DeployCustomDomainSupport:
+    !Not [!Equals [!Ref RootDomainName, '']]
+
+Globals:
+  Function:
+    Runtime: provided.al2023
+    Handler: bootstrap
+    Architectures:
+      - arm64
+    Tracing: Active
+    Timeout: 30
+    MemorySize: 1280
+    Environment:
+      Variables:
+        RUST_LOG: info
+        RUST_BACKTRACE: 1
+
+Resources:
+  ImageBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateNewBucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: false
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: false
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  ImageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateNewBucket
+    Properties:
+      Bucket: !Ref ImageBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadAllFiles
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub 'arn:${AWS::Partition}:s3:::${ImageBucket}/*.webp'
+
+  ConvertAndDownscaleFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: rust-cargolambda
+    Properties:
+      CodeUri: functions
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:PutObjectAcl
+              Resource: !Sub
+                - 'arn:${AWS::Partition}:s3:::${BucketName}/*'
+                - BucketName: !If [CreateNewBucket, !Ref ImageBucket, !Ref S3BucketName]
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource: !Sub
+                - 'arn:${AWS::Partition}:s3:::${BucketName}'
+                - BucketName: !If [CreateNewBucket, !Ref ImageBucket, !Ref S3BucketName]
+      Events:
+        AssetsObjectCreated:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - Object Created
+              detail:
+                bucket:
+                  name:
+                    - !If [CreateNewBucket, !Ref ImageBucket, !Ref S3BucketName]
+                object:
+                  key:
+                    - anything-but:
+                        suffix: ".webp"
+
+  AssetsDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub Assets distribution for ${RootDomainName}
+        Aliases: !If
+          - DeployCustomDomainSupport
+          - - !Sub ${CustomSubdomain}.${RootDomainName}
+          - !Ref AWS::NoValue
+        Origins:
+          - Id: AssetsS3Origin
+            DomainName: !Sub
+              - '${BucketName}.s3.${AWS::Region}.amazonaws.com'
+              - BucketName: !If [CreateNewBucket, !Ref ImageBucket, !Ref S3BucketName]
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: AssetsS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: !Ref AssetsCachePolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt AssetsWebpRewriteFunction.FunctionARN
+        PriceClass: PriceClass_100
+        ViewerCertificate: !If
+          - DeployCustomDomainSupport
+          - AcmCertificateArn: !Ref AssetsCertificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+
+  AssetsWebpRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub assets-webp-rewrite-${AWS::StackName}
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Rewrite image requests to WebP when supported.
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var headers = request.headers || {};
+          var accept = headers.accept ? headers.accept.value : '';
+          if (accept.indexOf('image/webp') === -1) {
+            return request;
+          }
+
+          var uri = request.uri || '';
+          if (uri.endsWith('.webp')) {
+            return request;
+          }
+
+          var pattern = /\.(jpe?g|png|gif|tiff|bmp)$/i;
+          if (!pattern.test(uri)) {
+            return request;
+          }
+
+          request.uri = uri.replace(pattern, '.webp');
+          return request;
+        }
+
+  AssetsCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub assets-cache-${AWS::StackName}
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 3600
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingBrotli: true
+          EnableAcceptEncodingGzip: true
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - Accept
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  AssetsDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: DeployCustomDomainSupport
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub ${CustomSubdomain}.${RootDomainName}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt AssetsDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+  AssetsCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: DeployCustomDomainSupport
+    Properties:
+      DomainName: !Sub ${CustomSubdomain}.${RootDomainName}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub ${CustomSubdomain}.${RootDomainName}
+          HostedZoneId: !Ref HostedZoneId
+
+Outputs:
+  AssetsUrl:
+    Description: Base URL for accessing assets (custom domain if configured, otherwise CloudFront)
+    Value: !If
+      - DeployCustomDomainSupport
+      - !Sub 'https://${CustomSubdomain}.${RootDomainName}'
+      - !Sub 'https://${AssetsDistribution.DomainName}'

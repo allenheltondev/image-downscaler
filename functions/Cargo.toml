@@ -1,0 +1,27 @@
+[package]
+name = "generate-webp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lambda_runtime = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros"] }
+aws-sdk-s3 = "1.0"
+aws-config = "1.0"
+image = { version = "0.24", features = ["webp"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+urlencoding = "2.1"
+
+[[bin]]
+name = "bootstrap"
+path = "src/main.rs"
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
