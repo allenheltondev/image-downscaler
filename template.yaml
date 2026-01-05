@@ -243,8 +243,20 @@ Resources:
 
 Outputs:
   AssetsUrl:
-    Description: Base URL for accessing assets (custom domain if configured, otherwise CloudFront)
+    Description: Base URL for accessing optimized images
     Value: !If
       - DeployCustomDomainSupport
       - !Sub 'https://${CustomSubdomain}.${RootDomainName}'
       - !Sub 'https://${AssetsDistribution.DomainName}'
+
+  ImageBucketName:
+    Description: Name of the S3 bucket where you can upload images for processing
+    Value: !If [CreateNewBucket, !Ref ImageBucket, !Ref S3BucketName]
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID for cache invalidation
+    Value: !Ref AssetsDistribution
+
+  ProcessingFunctionArn:
+    Description: ARN of the Lambda function that processes images
+    Value: !GetAtt ConvertAndDownscaleFunction.Arn

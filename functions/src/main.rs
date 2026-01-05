@@ -6,7 +6,7 @@ use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
-const TARGET_WIDTHS: &[u32] = &[480, 960, 1440, 1920];
+const TARGET_WIDTHS: &[u32] = &[240, 480, 768, 1200, 1920];
 
 #[derive(Deserialize)]
 struct EventBridgeEvent {
@@ -89,7 +89,7 @@ async fn handle_key(s3_client: &S3Client, bucket_name: &str, key: &str) -> Resul
     }
 
     // Create sized versions
-    let max_width = 1440;
+    let max_width = 1920;
     let width_targets: Vec<u32> = TARGET_WIDTHS.iter()
         .filter(|&&width| width <= max_width)
         .copied()

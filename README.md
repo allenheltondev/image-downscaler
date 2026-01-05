@@ -5,12 +5,37 @@ Serverless image processing service that automatically converts uploaded images 
 ## Features
 
 - **Automatic WebP Conversion**: Converts JPG, PNG, GIF, TIFF, and BMP images to WebP format
-- **Multiple Sizes**: Generates 480px, 960px, and 1440px wide versions
+- **Multiple Sizes**: Generates 240px (thumbnail), 480px (mobile), 768px (tablet), 1200px (desktop), and 1920px (large desktop) versions
 - **CloudFront CDN**: Global content delivery with intelligent WebP serving
 - **Smart Browser Support**: Automatically serves WebP to supporting browsers, falls back to originals
 - **S3 Integration**: Event-driven processing on S3 object uploads
 - **Custom Domain Support**: Optional custom domain with SSL certificate
 - **Rust Performance**: High-performance Lambda function written in Rust
+
+## Serverless Application Repository (SAR) Usage
+
+Deploy directly from the AWS Serverless Application Repository by adding this to your SAM template:
+
+```yaml
+ImageResizing:
+  Type: AWS::Serverless::Application
+  Properties:
+    Location:
+      ApplicationId: arn:aws:serverlessrepo:us-east-1:745159065988:applications/image-optimizer-for-blogs
+      SemanticVersion: 1.0.0
+    Parameters:
+      RootDomainName: !Ref RootDomainName
+      CustomSubdomain: images
+      HostedZoneId: !Ref HostedZoneId
+      S3BucketName: !Ref BucketName
+```
+
+Or deploy via AWS CLI:
+```bash
+aws serverlessrepo create-cloud-formation-template \
+  --application-id arn:aws:serverlessrepo:us-east-1:745159065988:applications/image-optimizer-for-blogs \
+  --semantic-version 1.0.0
+```
 
 ## Architecture
 
@@ -61,7 +86,11 @@ aws s3 cp image.jpg s3://your-bucket-name/
 
 The Lambda function will automatically:
 - Create `<filename>.webp` (original size)
-- Create `<filename>-480.webp`, `<filename>-960.webp`, `<filename>-1440.webp` (sized versions)
+- Create `<filename>-240.webp` (thumbnail)
+- Create `<filename>-480.webp` (mobile)
+- Create `<filename>-768.webp` (tablet)
+- Create `<filename>-1200.webp` (desktop)
+- Create `<filename>-1920.webp` (large desktop)
 
 ### 4. Access Images
 
@@ -72,23 +101,30 @@ Use the CloudFront URL from stack outputs with responsive srcset:
 <img
   src="https://your-cloudfront-domain/image.jpg"
   srcset="https://your-cloudfront-domain/image-480.jpg 480w,
-          https://your-cloudfront-domain/image-960.jpg 960w,
-          https://your-cloudfront-domain/image-1440.jpg 1440w"
+          https://your-cloudfront-domain/image-768.jpg 768w,
+          https://your-cloudfront-domain/image-1200.jpg 1200w,
+          https://your-cloudfront-domain/image-1920.jpg 1920w"
   sizes="(max-width: 480px) 480px,
-         (max-width: 960px) 960px,
-         1440px"
+         (max-width: 768px) 768px,
+         (max-width: 1200px) 1200px,
+         1920px"
   alt="Responsive optimized image">
 
 <!-- Direct WebP with srcset for maximum optimization -->
 <img
   src="https://your-cloudfront-domain/image.webp"
   srcset="https://your-cloudfront-domain/image-480.webp 480w,
-          https://your-cloudfront-domain/image-960.webp 960w,
-          https://your-cloudfront-domain/image-1440.webp 1440w"
+          https://your-cloudfront-domain/image-768.webp 768w,
+          https://your-cloudfront-domain/image-1200.webp 1200w,
+          https://your-cloudfront-domain/image-1920.webp 1920w"
   sizes="(max-width: 480px) 480px,
-         (max-width: 960px) 960px,
-         1440px"
+         (max-width: 768px) 768px,
+         (max-width: 1200px) 1200px,
+         1920px"
   alt="Responsive WebP image">
+
+<!-- Thumbnail usage -->
+<img src="https://your-cloudfront-domain/image-240.webp" alt="Thumbnail" width="240">
 
 <!-- Simple fallback for basic usage -->
 <img src="https://your-cloudfront-domain/image.jpg" alt="Auto-optimized">
@@ -104,9 +140,11 @@ Use the CloudFront URL from stack outputs with responsive srcset:
 ### Generated Files
 For an uploaded `photo.jpg`, you'll get:
 - `photo.webp` (original dimensions)
-- `photo-480.webp` (480px wide)
-- `photo-960.webp` (960px wide)
-- `photo-1440.webp` (1440px wide)
+- `photo-240.webp` (240px wide thumbnail)
+- `photo-480.webp` (480px wide mobile)
+- `photo-768.webp` (768px wide tablet)
+- `photo-1200.webp` (1200px wide desktop)
+- `photo-1920.webp` (1920px wide large desktop)
 
 ## Custom Domain Setup
 
