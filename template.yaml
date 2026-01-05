@@ -19,7 +19,7 @@ Metadata:
       - optimization
       - performance
     HomePageUrl: https://github.com/allenheltondev/image-downscaler
-    SemanticVersion: 1.0.0
+    SemanticVersion: 1.0.1
     SourceCodeUrl: https://github.com/allenheltondev/image-downscaler
     SpdxLicenseId: MIT
     ReadmeUrl: readme.md
